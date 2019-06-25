@@ -1,12 +1,12 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Interaction where
-
 
 import Data.Graph.Inductive
 import Data.Graph.Inductive.PatriciaTree
 import Data.Graph.Inductive.NodeMap
-
+import Data.Maybe (fromJust)
 
 data PortType = Prim
               | Aux1
@@ -15,6 +15,11 @@ data PortType = Prim
               | Aux4
               | Aux5
               deriving (Ord,Eq, Show)
+
+data NumPort = Port PortType Node
+             | FreePort
+             deriving Show
+
 
 data EdgeInfo = Edge (Node, PortType) (Node, PortType) deriving Show
 
@@ -37,15 +42,6 @@ data Auxiliary = Auxiliary Node
                | FreeNode
                deriving Show
 
-data NumPort = Auxiliary1 Node
-             | Auxiliary2 Node
-             | Auxiliary3 Node
-             | Auxiliary4 Node
-             | Auxiliary5 Node
-             | Primary1   Node
-             | FreePort
-             deriving Show
-
 -- eventually turn this into a nice Class representation to easily extend!
 data ProperPort
   = Construct {prim :: Primary, aux1 :: Auxiliary, aux2 :: Auxiliary}
@@ -53,18 +49,21 @@ data ProperPort
   | Erase     {prim :: Primary}
   deriving (Show)
 
-
 -- Rewrite REL into tagless final, so we aren't wasting memory on this silly tag, just pass in the function!
 -- | REL, a type that displays whether or not we are relinking from an old node or just adding a new link
 data REL a = Link a
-           | ReLink Node PortType 
+           | ReLink Node PortType
            deriving (Show)
+
 -- | Type for specifying how one wants to link nodes
 data Relink
   = RELAuxiliary2 { node :: Node, primary :: REL NumPort, auxiliary1 :: REL NumPort, auxiliary2 :: REL NumPort }
   | RELAuxiliary1 { node :: Node, primary :: REL NumPort, auxiliary1 :: REL NumPort }
   | RELAuxiliary0 { node :: Node, primary :: REL NumPort }
   deriving (Show)
+
+-- invariant, nodes must be connected to each other, thus un-directed
+type Net = Gr Lang EdgeInfo
 
 -- Graph to more typed construction-------------------------------------------------------
 aux0FromGraph :: (Primary -> ProperPort) -> Net -> Node -> Maybe ProperPort
@@ -87,6 +86,7 @@ aux2FromGraph constructor graph num =
     f (Edge (n1, n1port) (n2, n2port), n) con
       | n1 == num = conv (n2, n1port) con
       | n2 == num = conv (n1, n2port) con
+      | otherwise = con
     conv (n,Prim) con = con {prim = Primary n}
     conv (n,Aux1) con = con {aux1 = Auxiliary n}
     conv (n,Aux2) con = con {aux2 = Auxiliary n}
@@ -145,28 +145,44 @@ conDup net conNum deconNum (Construct _ auxA auxB) (Duplicate _ auxC auxD)
     (conD, net'''') = newNode net''' Con
     nodeA = RELAuxiliary2 { node       = dupA
                           , primary    = ReLink conNum Aux1
-                          , auxiliary1 = Link (Auxiliary1 conC)
-                          , auxiliary2 = Link (Auxiliary1 conD)
+                          , auxiliary1 = Link (Port Aux1 conC)
+                          , auxiliary2 = Link (Port Aux1 conD)
                           }
     nodeB = RELAuxiliary2 { node       = dupB
                           , primary    = ReLink conNum Aux2
-                          , auxiliary1 = Link (Auxiliary2 conC)
-                          , auxiliary2 = Link (Auxiliary2 conD)
+                          , auxiliary1 = Link (Port Aux2 conC)
+                          , auxiliary2 = Link (Port Aux2 conD)
                           }
     nodeC = RELAuxiliary2 { node       = conC
                           , primary    = ReLink deconNum Aux1
-                          , auxiliary1 = Link (Auxiliary1 dupA)
-                          , auxiliary2 = Link (Auxiliary1 dupB)
+                          , auxiliary1 = Link (Port Aux1 dupA)
+                          , auxiliary2 = Link (Port Aux1 dupB)
                           }
     nodeD = RELAuxiliary2 { node       = conD
                           , primary    = ReLink deconNum Aux2
-                          , auxiliary1 = Link (Auxiliary2 dupA)
-                          , auxiliary2 = Link (Auxiliary2 dupB)
+                          , auxiliary1 = Link (Port Aux2 dupA)
+                          , auxiliary2 = Link (Port Aux2 dupB)
                           }
+conDup _ _ _ _ _ = error "only send a construct and duplicate to conDup"
 -- Manipulation functions ------------------------------------------------------
 
+linkHelper net rel nodeType node =
+  case rel of
+    Link (Port portType node1) -> link net (node, nodeType) (node1, portType)
+    Link FreePort              -> net
+    ReLink oldNode oldPort     -> relink net (oldNode, oldPort) (node, nodeType)
+
+
 linkAll :: Net -> Relink -> Net
-linkAll = undefined
+linkAll net (RELAuxiliary0 {primary, node}) =
+  linkHelper net primary Prim node
+linkAll net (RELAuxiliary1 {primary, node, auxiliary1}) =
+  linkHelper (linkHelper net primary Prim node) auxiliary1 Aux1 node
+linkAll net (RELAuxiliary2 {primary, node, auxiliary1, auxiliary2}) =
+  foldr (\ (typ,nodeType) net -> linkHelper net typ nodeType node)
+        net
+        [(primary, Prim), (auxiliary1, Aux1), (auxiliary2, Aux2)]
+
 
 link :: Net -> (Node, PortType) -> (Node, PortType) -> Net
 link net (node1, port1) (node2, port2) =
@@ -204,9 +220,6 @@ findEdge net node port
       | t2 == (node, port) = t1
       | otherwise          = error "doesn't happen"
 -- Example Graphs --------------------------------------------------------------
-
--- invariant, nodes must be connected to each other, thus un-directed
-type Net = Gr Lang EdgeInfo
 
 exampleNet :: Net
 exampleNet = buildGr
