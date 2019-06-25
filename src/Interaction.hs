@@ -191,9 +191,11 @@ link net (node1, port1) (node2, port2) =
 -- post condition, must delete the old node passed after the set of transitions are done!
 relink :: Net -> (Node, PortType) -> (Node, PortType) -> Net
 relink net (oldNode, port) new@(newNode, newPort) =
-  insEdge (nodeToRelink, newNode, Edge relink new) net
-  where
-    relink@(nodeToRelink, nodeRelinkPort) = findEdge net oldNode port
+  case findEdge net oldNode port of
+    Just relink@(nodeToRelink, _) ->
+      insEdge (nodeToRelink, newNode, Edge relink new) net
+    -- The port was really free to begin with!
+    Nothing -> net
 
 newNode :: DynGraph gr => gr a b -> a -> (Node, gr a b)
 newNode graph lang = (succ maxNum, insNode (succ maxNum, lang) graph)
@@ -203,11 +205,14 @@ newNode graph lang = (succ maxNum, insNode (succ maxNum, lang) graph)
 auxToPrimary (Auxiliary node) = Primary node
 auxToPrimary FreeNode         = Free
 
+shead (x:_) = Just x
+shead []    = Nothing
+
 -- Precond, node must exist in the net with the respective port
-findEdge :: Net -> Node -> PortType -> (Node, PortType)
+findEdge :: Net -> Node -> PortType -> Maybe (Node, PortType)
 findEdge net node port
-  = other
-  $ head
+  = fmap other
+  $ shead
   $ filter f
   $ lneighbors net node
   where
