@@ -1,12 +1,12 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GADTs              #-}
+{-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE NamedFieldPuns #-}
 module Interaction where
 
-import Data.Graph.Inductive
-import Data.Graph.Inductive.PatriciaTree
-import Data.Graph.Inductive.NodeMap
-import Data.Maybe (fromJust)
+import           Data.Graph.Inductive
+import           Data.Graph.Inductive.NodeMap
+import           Data.Graph.Inductive.PatriciaTree
+import           Data.Maybe                        (fromJust)
 
 data PortType = Prim
               | Aux1
@@ -89,7 +89,7 @@ aux2FromGraph constructor graph num =
     conv (n,Prim) con = con {prim = Primary n}
     conv (n,Aux1) con = con {aux1 = Auxiliary n}
     conv (n,Aux2) con = con {aux2 = Auxiliary n}
-    conv (n,_) con = con
+    conv (n,_) con    = con
 
 -- extra work that could maybe be avoided by doing this else where?
 isBothPrimary :: Graph gr => gr a EdgeInfo -> Node -> Bool
@@ -154,7 +154,7 @@ reduce net =
             (Erase (Primary node)) ->
               case langToProperPort net node of
                 Nothing -> (net, isChanged)
-                Just x   -> (erase net node n x, True)
+                Just x  -> (erase net node n x, True)
 
 -- | Deals with the case when two nodes annihilate each other
 annihilate :: Net -> Node -> Node -> ProperPort -> ProperPort -> Net
@@ -194,13 +194,13 @@ conDup net conNum deconNum (Construct _ auxA auxB) (Duplicate _ auxC auxD)
     (conD, net'''') = newNode net''' Con
     nodeA = RELAuxiliary2 { node       = dupA
                           , primary    = ReLink conNum Aux1
-                          , auxiliary1 = Link (Port Aux1 conC)
-                          , auxiliary2 = Link (Port Aux1 conD)
+                          , auxiliary1 = Link (Port Aux1 conD)
+                          , auxiliary2 = Link (Port Aux1 conC)
                           }
     nodeB = RELAuxiliary2 { node       = dupB
                           , primary    = ReLink conNum Aux2
-                          , auxiliary1 = Link (Port Aux2 conC)
-                          , auxiliary2 = Link (Port Aux2 conD)
+                          , auxiliary1 = Link (Port Aux2 conD)
+                          , auxiliary2 = Link (Port Aux2 conC)
                           }
     nodeC = RELAuxiliary2 { node       = conC
                           , primary    = ReLink deconNum Aux1
