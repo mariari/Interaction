@@ -7,6 +7,8 @@ import           Data.Graph.Inductive
 import           Data.Graph.Inductive.NodeMap
 import           Data.Graph.Inductive.PatriciaTree
 import           Data.Maybe                        (fromJust)
+import qualified Data.Set        as Set
+import qualified Data.Map.Strict as Map
 
 data PortType = Prim
               | Aux1
@@ -183,7 +185,7 @@ erase net conNum eraseNum port
 -- | conDup deals with the case when Constructor and Duplicate share a primary
 conDup :: Net -> Node -> Node -> ProperPort -> ProperPort -> Net
 conDup net conNum deconNum (Construct _ auxA auxB) (Duplicate _ auxC auxD)
-  = delNodes [conNum, deconNum]
+  = deleteRewire [conNum, deconNum] [dupA, dupB, conC, conD]
   $ foldr (flip linkAll)
           net''''
           [nodeA, nodeB, nodeC, nodeD]
@@ -221,7 +223,6 @@ linkHelper net rel nodeType node =
     Link FreePort              -> net
     ReLink oldNode oldPort     -> relink net (oldNode, oldPort) (node, nodeType)
 
-
 linkAll :: Net -> Relink -> Net
 linkAll net (RELAuxiliary0 {primary, node}) =
   linkHelper net primary Prim node
@@ -257,8 +258,56 @@ newNode graph lang = (succ maxNum, insNode (succ maxNum, lang) graph)
   where
     (_,maxNum) = nodeRange graph
 
+deleteRewire :: [Node] -> [Node] -> Net -> Net
+deleteRewire oldNodesToDelete newNodes net = delNodes oldNodesToDelete dealWithConflict
+  where
+    newNodeSet           = Set.fromList newNodes
+    neighbors            = fmap fst (oldNodesToDelete >>= lneighbors net)
+    conflictingNeighbors = findConflict newNodeSet neighbors (Set.fromList oldNodesToDelete)
+    dealWithConflict     = foldr (\ (t1, t2) net -> link net t1 t2) net conflictingNeighbors
+
 auxToPrimary (Auxiliary node) = Primary node
 auxToPrimary FreeNode         = Free
+
+findConflict :: Set.Set Node -> [EdgeInfo] -> Set.Set Node -> [((Node, PortType), (Node, PortType))]
+findConflict nodes neighbors oldNodesToDelete = Set.toList linkNodes
+  where
+    linkNodes = foldr g mempty neighbors
+    g e@(Edge t1 t2@(n,_)) xs
+      | Map.member t1 makeMap && Map.member t2 makeMap = Set.insert ((makeMap Map.! t2), (makeMap Map.! t1)) xs
+      | otherwise             = xs
+    makeMap = foldr f mempty neighbors
+    f (Edge t1@(n1,_) t2@(n2,_)) hash
+      | Set.member n1 nodes = Map.insert t2 t1 hash
+      | Set.member n2 nodes = Map.insert t1 t2 hash
+      | otherwise           = hash
+
+
+
+findConflicts :: Set.Set Node -> [EdgeInfo] -> [EdgeInfo]
+findConflicts nodes neighbors
+  = filter f neighbors
+  where
+    f (Edge (n1,_) (n2,_))
+      | Set.member n1 nodes || Set.member n2 nodes = True
+      | otherwise                                 = False
+
+
+findEdges :: Net -> Node -> PortType -> [(Node, PortType)]
+findEdges net node port
+  = fmap other
+  $ filter f
+  $ lneighbors net node
+  where
+    f (Edge t1 t2, n)
+      | t1 == (node, port) = True
+      | t2 == (node, port) = True
+      | otherwise          = False
+    other (Edge t1 t2, n)
+      | t1 == (node, port) = t2
+      | t2 == (node, port) = t1
+      | otherwise          = error "doesn't happen"
+
 
 -- Precond, node must exist in the net with the respective port
 findEdge :: Net -> Node -> PortType -> Maybe (Node, PortType)
@@ -326,10 +375,10 @@ annihilate3 = buildGr
 nonTerminating :: Net
 nonTerminating = buildGr
            [ ( [ (Edge (2, Prim) (1, Prim), 2)
-               , (Edge (2, Aux2) (1, Aux2), 2)
+               , (Edge (2, Aux1) (1, Aux2), 2)
                , (Edge (3, Prim) (1, Aux1), 3)
                ], 1, Con, [])
-           , ( [ (Edge (4, Prim) (2, Aux1), 4)
+           , ( [ (Edge (4, Prim) (2, Aux2), 4)
                ], 2, Dup, [])
            , ( [], 3, Era, [] )
            , ( [], 4, Era, [] )
