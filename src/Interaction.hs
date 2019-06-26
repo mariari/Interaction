@@ -20,7 +20,6 @@ data NumPort = Port PortType Node
              | FreePort
              deriving Show
 
-
 data EdgeInfo = Edge (Node, PortType) (Node, PortType) deriving Show
 
 -- Eventually turn this into a GADΤ with more info?
@@ -92,7 +91,6 @@ aux2FromGraph constructor graph num =
     conv (n,Aux2) con = con {aux2 = Auxiliary n}
     conv (n,_) con = con
 
-
 conFromGraph :: Net -> Node -> Maybe ProperPort
 conFromGraph = aux2FromGraph Construct
 
@@ -114,28 +112,66 @@ langToProperPort graph n = do
 -- Graph manipulation ----------------------------------------------------------
 
 reduce :: Net -> Maybe Net
-reduce net = undefined
+reduce net =
+  let (newNet, isChanged) = foldr update (net,False) netNodes in
+    if isChanged then Just newNet else Nothing
   where
     netNodes = nodes net
-    recursive graph (n:ns) isChanged =
-      case langToProperPort graph n of
-        Nothing   -> recursive graph ns isChanged
+    update n (net, isChanged) =
+      case langToProperPort net n of
+        Nothing   -> (net, isChanged)
         Just port ->
           -- The main port we are looking at
           case port of
-            Construct Free _ _                       -> recursive graph ns isChanged
-            con@(Construct (Primary node) aux1 aux2) ->
-              case langToProperPort graph node of
+            Construct Free _ _                 -> (net, isChanged)
+            con@(Construct (Primary node) _ _) ->
+              case langToProperPort net node of
+                Nothing               -> error "nodes are undirected, precondition violated!"
+                Just d@(Duplicate {}) -> (conDup net n node con d, True)
+                Just (Erase {})       -> (erase net n node con, True)
+                Just c@(Construct {}) -> (annihilate net n node con c, True)
+            (Duplicate Free _ _)               -> (net, isChanged)
+            dup@(Duplicate (Primary node) _ _) ->
+              case langToProperPort net node of
                 Nothing -> error "nodes are undirected, precondition violated!"
-                Just port ->
-                  undefined
-    recursive graph [] True  = Just graph
-    recursive graph [] False = Nothing
+                Just d@(Duplicate {}) -> (annihilate net n node dup d, True)
+                Just (Erase {})       -> (erase net n node dup, True)
+                Just c@(Construct {}) ->  (conDup net node n c dup, True)
+            (Erase Free)           -> (net, isChanged)
+            (Erase (Primary node)) ->
+              case langToProperPort net node of
+                Nothing -> (net, isChanged)
+                Just x   -> (erase net node n x, True)
+
+-- | Deals with the case when two nodes annihilate each other
+annihilate :: Net -> Node -> Node -> ProperPort -> ProperPort -> Net
+annihilate net conNum1 conNum2 (Construct _ auxA auxB) (Construct _ auxC auxD)
+  = delNodes [conNum1, conNum2]
+  $ rewire (rewire net (Aux1, auxA) (Aux2, auxD)) (Aux2, auxB) (Aux1, auxC)
+
+annihilate net conNum1 conNum2 (Duplicate _ auxA auxB) (Duplicate _ auxC auxD)
+  = delNodes [conNum1, conNum2]
+  $ rewire (rewire net (Aux1, auxA) (Aux1, auxC)) (Aux2, auxB) (Aux2, auxD)
+annihilate _ _ _ _ _ = error "the other nodes do not annihilate eachother"
+
+-- | Deals with the case when an Erase Node hits any other node
+erase :: Net -> Node -> Node -> ProperPort -> Net
+erase net conNum eraseNum port
+  = case port of
+      (Construct {}) -> delNodes [conNum, eraseNum] (foldr (flip linkAll) net'' [nodeA, nodeB])
+      (Duplicate {}) -> delNodes [conNum, eraseNum] (foldr (flip linkAll) net'' [nodeA, nodeB])
+      (Erase {})     -> delNodes [conNum, eraseNum] net
+  where
+    (eraA, net')  = newNode net Era
+    (eraB, net'') = newNode net' Era
+    nodeA         = RELAuxiliary0 { node = eraA, primary = ReLink conNum Aux1 }
+    nodeB         = RELAuxiliary0 { node = eraB, primary = ReLink conNum Aux2 }
 
 -- | conDup deals with the case when Constructor and Duplicate share a primary
 conDup :: Net -> Node -> Node -> ProperPort -> ProperPort -> Net
 conDup net conNum deconNum (Construct _ auxA auxB) (Duplicate _ auxC auxD)
-  = foldr (flip linkAll)
+  = delNodes [conNum, deconNum]
+  $ foldr (flip linkAll)
           net''''
           [nodeA, nodeB, nodeC, nodeD]
   where
@@ -196,6 +232,12 @@ relink net (oldNode, port) new@(newNode, newPort) =
       insEdge (nodeToRelink, newNode, Edge relink new) net
     -- The port was really free to begin with!
     Nothing -> net
+
+-- | rewire is used to wire two auxiliary nodes together
+-- when the main nodes annihilate each other
+rewire :: Net -> (PortType, Auxiliary) -> (PortType, Auxiliary) -> Net
+rewire net (pa, (Auxiliary a)) (pb, (Auxiliary b)) = link net (a, pa) (b, pb)
+rewire net _ _                                     = net
 
 newNode :: DynGraph gr => gr a b -> a -> (Node, gr a b)
 newNode graph lang = (succ maxNum, insNode (succ maxNum, lang) graph)
