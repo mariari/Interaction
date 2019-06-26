@@ -6,7 +6,7 @@ module Interaction where
 import Data.Graph.Inductive
 import Data.Graph.Inductive.PatriciaTree
 import Data.Graph.Inductive.NodeMap
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 
 data PortType = Prim
               | Aux1
@@ -111,6 +111,9 @@ langToProperPort graph n = do
 
 -- Graph manipulation ----------------------------------------------------------
 
+reduceAll :: Net -> Net
+reduceAll = untilNothing reduce
+
 reduce :: Net -> Maybe Net
 reduce net =
   let (newNet, isChanged) = foldr update (net,False) netNodes in
@@ -136,7 +139,7 @@ reduce net =
                 Nothing -> error "nodes are undirected, precondition violated!"
                 Just d@(Duplicate {}) -> (annihilate net n node dup d, True)
                 Just (Erase {})       -> (erase net n node dup, True)
-                Just c@(Construct {}) ->  (conDup net node n c dup, True)
+                Just c@(Construct {}) -> (conDup net node n c dup, True)
             (Erase Free)           -> (net, isChanged)
             (Erase (Primary node)) ->
               case langToProperPort net node of
@@ -247,9 +250,6 @@ newNode graph lang = (succ maxNum, insNode (succ maxNum, lang) graph)
 auxToPrimary (Auxiliary node) = Primary node
 auxToPrimary FreeNode         = Free
 
-shead (x:_) = Just x
-shead []    = Nothing
-
 -- Precond, node must exist in the net with the respective port
 findEdge :: Net -> Node -> PortType -> Maybe (Node, PortType)
 findEdge net node port
@@ -266,10 +266,59 @@ findEdge net node port
       | t1 == (node, port) = t2
       | t2 == (node, port) = t1
       | otherwise          = error "doesn't happen"
+
+-- Utility functions -----------------------------------------------------------
+untilNothing :: (t -> Maybe t) -> t -> t
+untilNothing f a = fromMaybe a (f a)
+
+shead (x:_) = Just x
+shead []    = Nothing
 -- Example Graphs --------------------------------------------------------------
 
-exampleNet :: Net
-exampleNet = buildGr
-             [( [ (Edge (2, Prim) (1, Prim), 2) ], 1, Con, [])
-             ,([], 2, Dup, [])
-             ]
+commute1 :: Net
+commute1 = buildGr
+           [( [ (Edge (2, Prim) (1, Prim), 2) ], 1, Con, [])
+           ,([], 2, Dup, [])
+           ]
+
+commute2 :: Net
+commute2 = buildGr
+           [ ( [(Edge (2, Prim) (1, Prim), 2)], 1, Con, [] )
+           , ( [], 2, Era, [])
+           ]
+
+commute3 :: Net
+commute3 = buildGr
+           [ ( [(Edge (2, Prim) (1, Prim), 2)], 1, Dup, [] )
+           , ( [], 2, Era, [])
+           ]
+
+annihilate1 :: Net
+annihilate1 = buildGr
+           [ ( [ (Edge (2, Prim) (1, Prim), 2) ], 1, Con, [])
+           , ([], 2, Con, [])
+           ]
+
+annihilate2 :: Net
+annihilate2 = buildGr
+           [ ( [ (Edge (2, Prim) (1, Prim), 2) ], 1, Dup, [])
+           , ([], 2, Dup, [])
+           ]
+
+annihilate3 :: Net
+annihilate3 = buildGr
+           [ ( [ (Edge (2, Prim) (1, Prim), 2) ], 1, Era, [])
+           , ([], 2, Era, [])
+           ]
+
+nonTerminating :: Net
+nonTerminating = buildGr
+           [ ( [ (Edge (2, Prim) (1, Prim), 2)
+               , (Edge (2, Aux2) (1, Aux2), 2)
+               , (Edge (3, Prim) (1, Aux1), 3)
+               ], 1, Con, [])
+           , ( [ (Edge (4, Prim) (2, Aux1), 4)
+               ], 2, Dup, [])
+           , ( [], 3, Era, [] )
+           , ( [], 4, Era, [] )
+           ]
