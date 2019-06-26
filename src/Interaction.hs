@@ -91,6 +91,14 @@ aux2FromGraph constructor graph num =
     conv (n,Aux2) con = con {aux2 = Auxiliary n}
     conv (n,_) con = con
 
+-- extra work that could maybe be avoided by doing this else where?
+isBothPrimary :: Graph gr => gr a EdgeInfo -> Node -> Bool
+isBothPrimary net node =
+  null
+  $ filter (\ (Edge (_, p) (_, p')) -> p == Prim && p' == Prim)
+  $ fmap fst
+  $ lneighbors net node
+
 conFromGraph :: Net -> Node -> Maybe ProperPort
 conFromGraph = aux2FromGraph Construct
 
@@ -120,7 +128,9 @@ reduce net =
     if isChanged then Just newNet else Nothing
   where
     netNodes = nodes net
-    update n (net, isChanged) =
+    update n (net, isChanged)
+      | isBothPrimary net n = (net, isChanged)
+      | otherwise =
       case langToProperPort net n of
         Nothing   -> (net, isChanged)
         Just port ->
