@@ -6,7 +6,7 @@ module Interaction where
 import Data.Graph.Inductive
 import Data.Graph.Inductive.PatriciaTree
 import Data.Graph.Inductive.NodeMap
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromJust)
 
 data PortType = Prim
               | Aux1
@@ -279,7 +279,9 @@ findEdge net node port
 
 -- Utility functions -----------------------------------------------------------
 untilNothing :: (t -> Maybe t) -> t -> t
-untilNothing f a = fromMaybe a (f a)
+untilNothing f a = case f a of
+  Nothing -> a
+  Just a  -> untilNothing f a
 
 shead (x:_) = Just x
 shead []    = Nothing
