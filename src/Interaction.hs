@@ -125,10 +125,11 @@ reduceAll :: Net -> Net
 reduceAll = untilNothing reduce
 
 reduce :: Net -> Maybe Net
-reduce net =
-  let (newNet, isChanged) = foldr update (net,False) netNodes in
-    if isChanged then Just newNet else Nothing
+reduce net
+  | isChanged = Just newNet
+  | otherwise = Nothing
   where
+    (newNet, isChanged) = foldr update (net,False) netNodes
     netNodes = nodes net
     update n (net, isChanged)
       | isBothPrimary net n = (net, isChanged)
@@ -148,7 +149,7 @@ reduce net =
             (Duplicate Free _ _)               -> (net, isChanged)
             dup@(Duplicate (Primary node) _ _) ->
               case langToProperPort net node of
-                Nothing -> error "nodes are undirected, precondition violated!"
+                Nothing               -> error "nodes are undirected, precondition violated!"
                 Just d@(Duplicate {}) -> (annihilate net n node dup d, True)
                 Just (Erase {})       -> (erase net n node dup, True)
                 Just c@(Construct {}) -> (conDup net node n c dup, True)
@@ -173,10 +174,11 @@ annihilate _ _ _ _ _ = error "the other nodes do not annihilate eachother"
 erase :: Net -> Node -> Node -> ProperPort -> Net
 erase net conNum eraseNum port
   = case port of
-      (Construct {}) -> delNodes [conNum, eraseNum] (foldr (flip linkAll) net'' [nodeA, nodeB])
-      (Duplicate {}) -> delNodes [conNum, eraseNum] (foldr (flip linkAll) net'' [nodeA, nodeB])
+      (Construct {}) -> rewire
+      (Duplicate {}) -> rewire
       (Erase {})     -> delNodes [conNum, eraseNum] net
   where
+    rewire = deleteRewire [conNum, eraseNum] [eraA, eraB] (foldr (flip linkAll) net'' [nodeA, nodeB])
     (eraA, net')  = newNode net Era
     (eraB, net'') = newNode net' Era
     nodeA         = RELAuxiliary0 { node = eraA, primary = ReLink conNum Aux1 }
@@ -205,14 +207,14 @@ conDup net conNum deconNum (Construct _ auxA auxB) (Duplicate _ auxC auxD)
                           , auxiliary2 = Link (Port Aux2 conC)
                           }
     nodeC = RELAuxiliary2 { node       = conC
-                          , primary    = ReLink deconNum Aux1
-                          , auxiliary1 = Link (Port Aux1 dupA)
-                          , auxiliary2 = Link (Port Aux1 dupB)
-                          }
-    nodeD = RELAuxiliary2 { node       = conD
                           , primary    = ReLink deconNum Aux2
                           , auxiliary1 = Link (Port Aux2 dupA)
                           , auxiliary2 = Link (Port Aux2 dupB)
+                          }
+    nodeD = RELAuxiliary2 { node       = conD
+                          , primary    = ReLink deconNum Aux1
+                          , auxiliary1 = Link (Port Aux1 dupA)
+                          , auxiliary2 = Link (Port Aux1 dupB)
                           }
 conDup _ _ _ _ _ = error "only send a construct and duplicate to conDup"
 -- Manipulation functions ------------------------------------------------------
@@ -242,10 +244,8 @@ link net (node1, port1) (node2, port2) =
 relink :: Net -> (Node, PortType) -> (Node, PortType) -> Net
 relink net (oldNode, port) new@(newNode, newPort) =
   case findEdge net oldNode port of
-    Just relink@(nodeToRelink, _) ->
-      insEdge (nodeToRelink, newNode, Edge relink new) net
-    -- The port was really free to begin with!
-    Nothing -> net
+    Just relink@(nodeToRelink, _) -> insEdge (nodeToRelink, newNode, Edge relink new) net
+    Nothing                       -> net -- The port was really free to begin with!
 
 -- | rewire is used to wire two auxiliary nodes together
 -- when the main nodes annihilate each other
@@ -262,7 +262,7 @@ deleteRewire :: [Node] -> [Node] -> Net -> Net
 deleteRewire oldNodesToDelete newNodes net = delNodes oldNodesToDelete dealWithConflict
   where
     newNodeSet           = Set.fromList newNodes
-    neighbors            = fmap fst (oldNodesToDelete >>= lneighbors net)
+    neighbors            = fst <$> (oldNodesToDelete >>= lneighbors net)
     conflictingNeighbors = findConflict newNodeSet neighbors (Set.fromList oldNodesToDelete)
     dealWithConflict     = foldr (\ (t1, t2) net -> link net t1 t2) net conflictingNeighbors
 
@@ -270,52 +270,21 @@ auxToPrimary (Auxiliary node) = Primary node
 auxToPrimary FreeNode         = Free
 
 findConflict :: Set.Set Node -> [EdgeInfo] -> Set.Set Node -> [((Node, PortType), (Node, PortType))]
-findConflict nodes neighbors oldNodesToDelete = Set.toList linkNodes
+findConflict nodes neighbors oldNodesToDelete = Set.toList (foldr f mempty neighbors)
   where
-    linkNodes = foldr g mempty neighbors
-    g e@(Edge t1 t2@(n,_)) xs
+    f e@(Edge t1 t2@(n,_)) xs
       | Map.member t1 makeMap && Map.member t2 makeMap = Set.insert ((makeMap Map.! t2), (makeMap Map.! t1)) xs
-      | otherwise             = xs
+      | otherwise = xs
     makeMap = foldr f mempty neighbors
-    f (Edge t1@(n1,_) t2@(n2,_)) hash
-      | Set.member n1 nodes = Map.insert t2 t1 hash
-      | Set.member n2 nodes = Map.insert t1 t2 hash
-      | otherwise           = hash
-
-
-
-findConflicts :: Set.Set Node -> [EdgeInfo] -> [EdgeInfo]
-findConflicts nodes neighbors
-  = filter f neighbors
-  where
-    f (Edge (n1,_) (n2,_))
-      | Set.member n1 nodes || Set.member n2 nodes = True
-      | otherwise                                 = False
-
-
-findEdges :: Net -> Node -> PortType -> [(Node, PortType)]
-findEdges net node port
-  = fmap other
-  $ filter f
-  $ lneighbors net node
-  where
-    f (Edge t1 t2, n)
-      | t1 == (node, port) = True
-      | t2 == (node, port) = True
-      | otherwise          = False
-    other (Edge t1 t2, n)
-      | t1 == (node, port) = t2
-      | t2 == (node, port) = t1
-      | otherwise          = error "doesn't happen"
-
+      where
+        f (Edge t1@(n1,_) t2@(n2,_)) hash
+          | Set.member n1 nodes = Map.insert t2 t1 hash
+          | Set.member n2 nodes = Map.insert t1 t2 hash
+          | otherwise           = hash
 
 -- Precond, node must exist in the net with the respective port
 findEdge :: Net -> Node -> PortType -> Maybe (Node, PortType)
-findEdge net node port
-  = fmap other
-  $ shead
-  $ filter f
-  $ lneighbors net node
+findEdge net node port = fmap other $ shead $ filter f $ lneighbors net node
   where
     f (Edge t1 t2, n)
       | t1 == (node, port) = True
