@@ -53,23 +53,26 @@ data ProperPort
   | Erase     {prim :: Primary}
   deriving (Show)
 
--- Rewrite REL into tagless final, so we aren't wasting memory on this silly tag, just pass in the function!
--- | REL, a type that displays whether or not we are relinking from an old node or just adding a new link
+-- Rewrite REL into tagless final, so we aren't memory
+-- wasting on this silly tag, just pass in the function!
+-- | REL: a type that displays whether we are linking from an old node or just adding a new link
 data REL a = Link a
            | ReLink Node PortType
            deriving (Show)
 
 -- | Type for specifying how one wants to link nodes
 data Relink
-  = RELAuxiliary2 { node :: Node, primary :: REL NumPort, auxiliary1 :: REL NumPort, auxiliary2 :: REL NumPort }
+  = RELAuxiliary2 { node       :: Node
+                  , primary    :: REL NumPort
+                  , auxiliary1 :: REL NumPort
+                  , auxiliary2 :: REL NumPort }
   | RELAuxiliary1 { node :: Node, primary :: REL NumPort, auxiliary1 :: REL NumPort }
   | RELAuxiliary0 { node :: Node, primary :: REL NumPort }
   deriving (Show)
 
--- invariant, nodes must be connected to each other, thus un-directed
 type Net = Gr Lang EdgeInfo
 
-
+-- | StateInfo Stores diagnostic data on how much memory a particular graph reduction uses
 data StateInfo = Info { memoryAllocated  :: Integer
                       , sequentalSteps   :: Integer
                       , parallelSteps    :: Integer
@@ -78,7 +81,8 @@ data StateInfo = Info { memoryAllocated  :: Integer
                       } deriving (Show)
 
 sequentalStep :: MonadState StateInfo m => m ()
-sequentalStep      = modify' (\c -> c {sequentalSteps = sequentalSteps c + 1})
+sequentalStep = modify' (\c -> c {sequentalSteps = sequentalSteps c + 1})
+
 incGraphSizeStep n = do
   Info memAlloced seqStep parallelSteps largestGraph currGraph <- get
   let memoryAllocated | n > 0 = memAlloced + n
@@ -86,7 +90,7 @@ incGraphSizeStep n = do
       currentGraphSize = n + currGraph
       biggestGraphSize = max currentGraphSize largestGraph
       sequentalSteps = succ seqStep
-  put (Info {memoryAllocated, currentGraphSize, biggestGraphSize, sequentalSteps, parallelSteps})
+  put Info {memoryAllocated, currentGraphSize, biggestGraphSize, sequentalSteps, parallelSteps}
 
 -- Graph to more typed construction-------------------------------------------------------
 aux0FromGraph :: (Primary -> ProperPort) -> Net -> Node -> Maybe ProperPort
@@ -171,23 +175,25 @@ reduce net = do
             -- The main port we are looking at
             case port of
               Construct Free _ _                 -> pure (net, isChanged)
+              Duplicate Free _ _                 -> pure (net, isChanged)
+              Erase Free                         -> pure (net, isChanged)
               con@(Construct (Primary node) _ _) ->
+                updated <$>
                 case langToProperPort net node of
-                  Nothing               -> error "nodes are undirected, precondition violated!"
-                  Just d@(Duplicate {}) -> updated <$> conDup net n node con d
-                  Just (Erase {})       -> updated <$> erase net n node con
-                  Just c@(Construct {}) -> updated <$> annihilate net n node con c
-              (Duplicate Free _ _)               -> pure (net, isChanged)
+                  Nothing             -> error "nodes are undirected, precondition violated!"
+                  Just d@Duplicate {} -> conDup     net n node con d
+                  Just Erase {}       -> erase      net n node con
+                  Just c@Construct {} -> annihilate net n node con c
               dup@(Duplicate (Primary node) _ _) ->
+                updated <$>
                 case langToProperPort net node of
-                  Nothing               -> error "nodes are undirected, precondition violated!"
-                  Just d@(Duplicate {}) -> updated <$> annihilate net n node dup d
-                  Just (Erase {})       -> updated <$> erase net n node dup
-                  Just c@(Construct {}) -> updated <$> conDup net node n c dup
-              (Erase Free)           -> pure (net, isChanged)
-              (Erase (Primary node)) ->
+                  Nothing             -> error "nodes are undirected, precondition violated!"
+                  Just d@Duplicate {} -> annihilate net n node dup d
+                  Just Erase {}       -> erase      net n node dup
+                  Just c@Construct {} -> conDup     net node n c dup
+              Erase (Primary node) ->
                 case langToProperPort net node of
-                  Nothing -> pure (net, isChanged)
+                  Nothing -> error "nodes are undirected, precondition violated!"
                   Just x  -> updated <$> erase net node n x
 
 -- | Deals with the case when two nodes annihilate each other
@@ -213,7 +219,9 @@ erase net conNum eraseNum port
       (Duplicate {}) -> rewire <$ sequentalStep
       (Erase {})     -> delNodes [conNum, eraseNum] net <$ incGraphSizeStep (-2)
   where
-    rewire = deleteRewire [conNum, eraseNum] [eraA, eraB] (foldr (flip linkAll) net'' [nodeA, nodeB])
+    rewire = deleteRewire [conNum, eraseNum]
+                          [eraA, eraB]
+                          (foldr (flip linkAll) net'' [nodeA, nodeB])
     (eraA, net')  = newNode net Era
     (eraB, net'') = newNode net' Era
     nodeA         = RELAuxiliary0 { node = eraA, primary = ReLink conNum Aux1 }
@@ -310,7 +318,8 @@ findConflict :: Set.Set Node -> [EdgeInfo] -> Set.Set Node -> [((Node, PortType)
 findConflict nodes neighbors oldNodesToDelete = Set.toList (foldr f mempty neighbors)
   where
     f e@(Edge t1 t2@(n,_)) xs
-      | Map.member t1 makeMap && Map.member t2 makeMap = Set.insert ((makeMap Map.! t2), (makeMap Map.! t1)) xs
+      | Map.member t1 makeMap && Map.member t2 makeMap =
+        Set.insert ((makeMap Map.! t2), (makeMap Map.! t1)) xs
       | otherwise = xs
     makeMap = foldr f mempty neighbors
       where
